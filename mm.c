@@ -92,8 +92,7 @@ static const word_t alloc_mask = 0x1;
 static const word_t size_mask = ~(word_t)0xF;
 
 typedef union {
-  char *char_ptr;
-  word_t *word_ptr;
+  void *ptr;
   long addr;
 } mem;
 
@@ -516,18 +515,22 @@ bool mm_checkheap(int line) {
   word_t *prologue = find_prev_footer(heap_start);
   block_t *header = heap_start;
   word_t *footer, *prev_footer;
-  mem location;
+  mem start, end;
+  mem cur;
   size_t header_size, footer_size;
   bool header_a, footer_a, prev_footer_a;
-  // Prologue should be allocated
-  location.word_ptr = prologue;
-  if (!extract_alloc(*prologue) || extract_size(*prologue) != 0 ||
-      location.addr % dsize != 0)
+  long padding;
+  // Prologue should be allocated, and marked the start of the heap
+  cur.ptr = prologue;
+  start.ptr = mem_heap_lo();
+  end.ptr = mem_heap_hi();
+  padding = cur.addr - start.addr;
+  if (!extract_alloc(*prologue) || extract_size(*prologue) != 0 || padding < 0)
     return false;
   while ((header_size = get_size(header)) > 0) {
     // payload should be aligned to 16
-    location.char_ptr = header_to_payload(header);
-    if (location.addr % 16 != 0)
+    cur.ptr = header_to_payload(header);
+    if (cur.addr % 16 != 0)
       return false;
     // Check if the header size matches with footer size
     footer = header_to_footer(header);
@@ -546,8 +549,10 @@ bool mm_checkheap(int line) {
       return false;
     header = find_next(header);
   }
-  // Epilogue should remain allocated
-  if (!get_alloc(header) || get_size(header) != 0)
+  cur.ptr = header;
+  padding = end.addr - cur.addr;
+  // Epilogue should remain allocated, and mark the end of the heap
+  if (!get_alloc(header) || get_size(header) != 0 || padding < 0)
     return false;
   return true;
 }
@@ -574,6 +579,7 @@ bool mm_checkheap(int line) {
  * 6f 2e 2e 2e 20 68 61 68 61 68 61 21 20 41 53 43 49 49 20 69               *
  *                                                                           *
  * 73 6e 27 74 20 74 68 65 20 72 69 67 68 74 20 65 6e 63 6f 64               *
+ * 69 6e 67 21 20 4e 69 63 65 20 74 72 79 2c 20 74 68 6f 75 67               *
  * 69 6e 67 21 20 4e 69 63 65 20 74 72 79 2c 20 74 68 6f 75 67               *
  * 68 21 20 2d 44 72 2e 20 45 76 69 6c 0a de ba c1 e1 52 13 0a               *
  *                                                                           *
