@@ -279,6 +279,7 @@ void *malloc(size_t size) {
   write_footer(block, block_size, true);
 
   // Try to split the block if too large
+  free_remove(block);
   split_block(block, asize);
 
   bp = header_to_payload(block);
@@ -324,39 +325,73 @@ void free(void *bp) {
  * <Are there any preconditions or postconditions?>
  */
 void *realloc(void *ptr, size_t size) {
+  /*
+    block_t *block = payload_to_header(ptr);
+    size_t copysize;
+    void *newptr;
+
+    // If size == 0, then free block and return NULL
+    if (size == 0) {
+      // free(ptr);
+      return NULL;
+    }
+
+    // If ptr is NULL, then equivalent to malloc
+    if (ptr == NULL) {
+      return malloc(size);
+    }
+
+    // Otherwise, proceed with reallocation
+    newptr = malloc(size);
+
+    // If malloc fails, the original block is left untouched
+    if (newptr == NULL) {
+      return NULL;
+    }
+
+    // Copy the old data
+    copysize = get_payload_size(block); // gets size of old payload
+    if (size < copysize) {
+      copysize = size;
+    }
+    memcpy(newptr, ptr, copysize);
+
+    // Free the old block
+    free(ptr);
+
+    return newptr;
+  */
+
+  void *newptr = NULL;
   block_t *block = payload_to_header(ptr);
-  size_t copysize;
-  void *newptr;
-
-  // If size == 0, then free block and return NULL
-  if (size == 0) {
-    // free(ptr);
-    return NULL;
-  }
-
+  block_t *block_next = find_next(block);
+  bool next_alloc = get_alloc(block_next);
+  size_t asize = round_up(size + dsize, dsize);
+  size_t block_size = get_size(block);
   // If ptr is NULL, then equivalent to malloc
   if (ptr == NULL) {
     return malloc(size);
   }
-
-  // Otherwise, proceed with reallocation
-  newptr = malloc(size);
-
-  // If malloc fails, the original block is left untouched
-  if (newptr == NULL) {
-    return NULL;
+  if (!next_alloc) {
+    // Mark the block to be free and coalesce
+    // with the next neighbor free block if exists
+    block_size += get_size(block_next);
   }
-
-  // Copy the old data
-  copysize = get_payload_size(block); // gets size of old payload
-  if (size < copysize) {
-    copysize = size;
+  if (block_size < asize) {
+    newptr = malloc(asize);
+    if (newptr == NULL)
+      return NULL;
+    memcpy(newptr, ptr, get_payload_size(block));
+    free(ptr);
+  } else {
+    // The current block is large enough to be reallocated
+    if (!next_alloc)
+      free_remove(block_next);
+    write_header(block, block_size, true);
+    write_footer(block, block_size, true);
+    split_block(block, asize);
+    newptr = block->payload;
   }
-  memcpy(newptr, ptr, copysize);
-
-  // Free the old block
-  free(ptr);
-
   return newptr;
 }
 
@@ -501,7 +536,6 @@ static void split_block(block_t *block, size_t asize) {
   /* TODO: Can you write a precondition about the value of asize? */
 
   size_t block_size = get_size(block);
-  free_remove(block);
   if ((block_size - asize) >= min_block_size) {
     block_t *block_next;
 
@@ -788,11 +822,11 @@ static word_t *header_to_footer(block_t *block) {
  */
 static void free_add(block_t *block) {
   node_t node, node_tail;
+  if (!block)
+    return;
   node.ptr = block->payload;
   node.link->prev = NULL;
   node.link->next = NULL;
-  if (!block)
-    return;
   if (free_empty()) {
     fl.head = block;
     fl.tail = block;
@@ -810,7 +844,7 @@ static void free_add(block_t *block) {
 static void free_remove(block_t *block) {
   node_t node, node_next, node_prev;
   block_t *block_next, *block_prev;
-  if (!block || get_size(block) <= 0)
+  if (!block)
     return;
   node.ptr = block->payload, node_next.ptr = NULL, node_prev.ptr = NULL;
   block_next = node.link->next;
