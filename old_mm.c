@@ -91,11 +91,6 @@ static const word_t alloc_mask = 0x1;
 // TODO: explain what size_mask is
 static const word_t size_mask = ~(word_t)0xF;
 
-typedef union {
-  void *ptr;
-  long addr;
-} mem;
-
 /* Represents the header and payload of one block in the heap */
 typedef struct block {
   /* Header contains size + allocation flag */
@@ -127,23 +122,10 @@ typedef struct block {
    */
 } block_t;
 
-typedef struct {
-  block_t *prev;
-  block_t *next;
-} link_t;
-
-typedef union {
-  link_t *link;
-  char *ptr;
-} node_t;
-
 /* Global variables */
 
 // Pointer to first block
 static block_t *heap_start = NULL;
-
-// Pointer to first free block
-static block_t *free_start = NULL;
 
 /* Function prototypes for internal helper routines */
 
@@ -176,11 +158,6 @@ static block_t *find_next(block_t *block);
 static word_t *find_prev_footer(block_t *block);
 static block_t *find_prev(block_t *block);
 
-static void free_add(block_t *block);
-static void free_remove(block_t *block);
-static block_t *free_next(block_t *block);
-static block_t *free_prev(block_t *block);
-
 /*
  * <What does this function do?>
  * <What are the function's arguments?>
@@ -206,7 +183,6 @@ bool mm_init(void) {
 
   // Heap starts with first "block header", currently the epilogue
   heap_start = (block_t *)&(start[1]);
-  free_start = NULL;
 
   // Extend the empty heap with a free block of chunksize bytes
   if (extend_heap(chunksize) == NULL) {
@@ -288,8 +264,7 @@ void free(void *bp) {
     return;
   }
 
-  block_t *block;
-  block = payload_to_header(bp);
+  block_t *block = payload_to_header(bp);
   size_t size = get_size(block);
 
   // The block should be marked as allocated
@@ -318,7 +293,7 @@ void *realloc(void *ptr, size_t size) {
 
   // If size == 0, then free block and return NULL
   if (size == 0) {
-    // free(ptr);
+    free(ptr);
     return NULL;
   }
 
@@ -440,7 +415,6 @@ static block_t *coalesce_block(block_t *block) {
   if (prev_alloc && next_alloc) // Case 1
   {
     // Nothing to do
-    free_add(block);
   }
 
   else if (prev_alloc && !next_alloc) // Case 2
@@ -448,8 +422,6 @@ static block_t *coalesce_block(block_t *block) {
     size += get_size(block_next);
     write_header(block, size, false);
     write_footer(block, size, false);
-    free_remove(block_next);
-    free_add(block);
   }
 
   else if (!prev_alloc && next_alloc) // Case 3
@@ -458,8 +430,6 @@ static block_t *coalesce_block(block_t *block) {
     write_header(block_prev, size, false);
     write_footer(block_prev, size, false);
     block = block_prev;
-    free_remove(block_prev);
-    free_add(block);
   }
 
   else // Case 4
@@ -468,9 +438,6 @@ static block_t *coalesce_block(block_t *block) {
     write_header(block_prev, size, false);
     write_footer(block_prev, size, false);
     block = block_prev;
-    free_remove(block_prev);
-    free_remove(block_next);
-    free_add(block);
   }
 
   dbg_ensures(!get_alloc(block));
@@ -489,17 +456,15 @@ static void split_block(block_t *block, size_t asize) {
   /* TODO: Can you write a precondition about the value of asize? */
 
   size_t block_size = get_size(block);
-  free_remove(block);
+
   if ((block_size - asize) >= min_block_size) {
     block_t *block_next;
-
     write_header(block, asize, true);
     write_footer(block, asize, true);
 
     block_next = find_next(block);
     write_header(block_next, block_size - asize, false);
     write_footer(block_next, block_size - asize, false);
-    free_add(block_next);
   }
 
   dbg_ensures(get_alloc(block));
@@ -512,13 +477,15 @@ static void split_block(block_t *block, size_t asize) {
  * <Are there any preconditions or postconditions?>
  */
 static block_t *find_fit(size_t asize) {
-  block_t *block = free_start;
-  while (block) {
-    if (asize <= get_size(block))
+  block_t *block;
+
+  for (block = heap_start; get_size(block) > 0; block = find_next(block)) {
+
+    if (!(get_alloc(block)) && (asize <= get_size(block))) {
       return block;
-    block = free_next(block);
+    }
   }
-  return NULL;
+  return NULL; // no fit found
 }
 
 /*
@@ -540,74 +507,7 @@ bool mm_checkheap(int line) {
    * Internal use only: If you mix guacamole on your bibimbap,
    * do you eat it with a pair of chopsticks, or with a spoon?
    */
-  word_t *prologue = find_prev_footer(heap_start);
-  block_t *header = heap_start;
-  word_t *footer, *prev_footer;
-  mem start, end;
-  node_t node, node_next, node_prev;
-  mem cur;
-  size_t header_size, footer_size;
-  bool header_a, footer_a, prev_footer_a;
-  long padding, free_counts = 0;
-  // Prologue should be allocated, and marked the start of the heap
-  cur.ptr = prologue;
-  start.ptr = mem_heap_lo();
-  end.ptr = mem_heap_hi();
-  padding = cur.addr - start.addr;
-  if (!extract_alloc(*prologue) || extract_size(*prologue) != 0 || padding < 0)
-    return false;
-  while ((header_size = get_size(header)) > 0) {
-    // payload should be aligned to 16
-    cur.ptr = header_to_payload(header);
-    if (cur.addr % 16 != 0)
-      return false;
-    // Check if the header size matches with footer size
-    footer = header_to_footer(header);
-    footer_size = extract_size(*footer);
-    if (header_size != footer_size)
-      return false;
-    // Check if allocated flags are same
-    header_a = get_alloc(header);
-    footer_a = extract_alloc(*footer);
-    if (header_a != footer_a)
-      return false;
-    // Check no two consecutive free blocks
-    prev_footer = find_prev_footer(header);
-    prev_footer_a = extract_alloc(*prev_footer);
-    if (!prev_footer_a && !header_a)
-      return false;
-    // Check if the free block is linked correctly
-    if (!header_a) {
-      free_counts++;
-      node.ptr = header->payload;
 
-      if (node.link->next)
-        node_next.ptr = node.link->next->payload;
-      if (node.link->prev)
-        node_prev.ptr = node.link->prev->payload;
-
-      if (node.link->prev && (header != node_prev.link->next))
-        return false;
-      if (node.link->next && (header != node_next.link->prev))
-        return false;
-    }
-    header = find_next(header);
-  }
-  cur.ptr = header;
-  padding = end.addr - cur.addr;
-  // Epilogue should remain allocated, and mark the end of the heap
-  if (!get_alloc(header) || get_size(header) != 0 || padding < 0)
-    return false;
-  // Check if there is a circle in the free list
-  header = free_start;
-  while (header) {
-    free_counts--;
-    if (free_counts < 0)
-      return false;
-    header = free_next(header);
-  }
-  if (free_counts > 0)
-    return false;
   return true;
 }
 
@@ -633,7 +533,6 @@ bool mm_checkheap(int line) {
  * 6f 2e 2e 2e 20 68 61 68 61 68 61 21 20 41 53 43 49 49 20 69               *
  *                                                                           *
  * 73 6e 27 74 20 74 68 65 20 72 69 67 68 74 20 65 6e 63 6f 64               *
- * 69 6e 67 21 20 4e 69 63 65 20 74 72 79 2c 20 74 68 6f 75 67               *
  * 69 6e 67 21 20 4e 69 63 65 20 74 72 79 2c 20 74 68 6f 75 67               *
  * 68 21 20 2d 44 72 2e 20 45 76 69 6c 0a de ba c1 e1 52 13 0a               *
  *                                                                           *
@@ -769,61 +668,4 @@ static void *header_to_payload(block_t *block) {
  */
 static word_t *header_to_footer(block_t *block) {
   return (word_t *)(block->payload + get_size(block) - dsize);
-}
-
-/*
- *Add the block to the free list
- */
-static void free_add(block_t *block) {
-  node_t node, node_head;
-  node.ptr = block->payload;
-  node.link->prev = NULL;
-  node.link->next = NULL;
-  if (!block)
-    return;
-  if (free_start) {
-    node_head.ptr = free_start->payload;
-    node_head.link->prev = block;
-    node.link->next = free_start;
-  }
-  free_start = block;
-}
-
-/*
- * Remove the block from the free list
- */
-static void free_remove(block_t *block) {
-  node_t node, node_next, node_prev;
-  block_t *block_next, *block_prev;
-  if (!block || get_size(block) <= 0)
-    return;
-  node.ptr = block->payload, node_next.ptr = NULL, node_prev.ptr = NULL;
-  block_next = node.link->next;
-  block_prev = node.link->prev;
-  if (block_next)
-    node_next.ptr = block_next->payload;
-  if (block_prev)
-    node_prev.ptr = block_prev->payload;
-  if (node_next.ptr)
-    node_next.link->prev = node.link->prev;
-  if (node_prev.ptr)
-    node_prev.link->next = node.link->next;
-  if (block == free_start)
-    free_start = block_next;
-}
-
-static block_t *free_next(block_t *block) {
-  node_t node;
-  if (!block)
-    return NULL;
-  node.ptr = block->payload;
-  return node.link->next;
-}
-
-static block_t *free_prev(block_t *block) {
-  node_t node;
-  if (!block)
-    return NULL;
-  node.ptr = block->payload;
-  return node.link->prev;
 }
