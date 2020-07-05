@@ -91,11 +91,6 @@ static const word_t alloc_mask = 0x1;
 // TODO: explain what size_mask is
 static const word_t size_mask = ~(word_t)0xF;
 
-typedef union {
-  void *ptr;
-  long addr;
-} mem;
-
 /* Represents the header and payload of one block in the heap */
 typedef struct block {
   /* Header contains size + allocation flag */
@@ -127,6 +122,11 @@ typedef struct block {
    */
 } block_t;
 
+typedef union {
+  void *ptr;
+  long addr;
+} mem;
+
 typedef struct {
   block_t *prev;
   block_t *next;
@@ -137,13 +137,21 @@ typedef union {
   char *ptr;
 } node_t;
 
+typedef struct {
+  block_t *head;
+  block_t *tail;
+} free_list;
+
 /* Global variables */
 
 // Pointer to first block
 static block_t *heap_start = NULL;
 
 // Pointer to first free block
-static block_t *free_start = NULL;
+// static block_t *free_start = NULL;
+
+// The free block list
+static free_list fl;
 
 /* Function prototypes for internal helper routines */
 
@@ -180,6 +188,7 @@ static void free_add(block_t *block);
 static void free_remove(block_t *block);
 static block_t *free_next(block_t *block);
 static block_t *free_prev(block_t *block);
+static bool free_empty();
 
 /*
  * <What does this function do?>
@@ -206,7 +215,10 @@ bool mm_init(void) {
 
   // Heap starts with first "block header", currently the epilogue
   heap_start = (block_t *)&(start[1]);
-  free_start = NULL;
+
+  // Initialize the free list
+  fl.head = NULL;
+  fl.tail = NULL;
 
   // Extend the empty heap with a free block of chunksize bytes
   if (extend_heap(chunksize) == NULL) {
@@ -512,7 +524,7 @@ static void split_block(block_t *block, size_t asize) {
  * <Are there any preconditions or postconditions?>
  */
 static block_t *find_fit(size_t asize) {
-  block_t *block = free_start;
+  block_t *block = fl.head;
   while (block) {
     if (asize <= get_size(block))
       return block;
@@ -599,7 +611,7 @@ bool mm_checkheap(int line) {
   if (!get_alloc(header) || get_size(header) != 0 || padding < 0)
     return false;
   // Check if there is a circle in the free list
-  header = free_start;
+  header = fl.head;
   while (header) {
     free_counts--;
     if (free_counts < 0)
@@ -775,18 +787,21 @@ static word_t *header_to_footer(block_t *block) {
  *Add the block to the free list
  */
 static void free_add(block_t *block) {
-  node_t node, node_head;
+  node_t node, node_tail;
   node.ptr = block->payload;
   node.link->prev = NULL;
   node.link->next = NULL;
   if (!block)
     return;
-  if (free_start) {
-    node_head.ptr = free_start->payload;
-    node_head.link->prev = block;
-    node.link->next = free_start;
+  if (free_empty()) {
+    fl.head = block;
+    fl.tail = block;
+  } else {
+    node_tail.ptr = fl.tail->payload;
+    node_tail.link->next = block;
+    node.link->prev = fl.tail;
+    fl.tail = block;
   }
-  free_start = block;
 }
 
 /*
@@ -808,8 +823,14 @@ static void free_remove(block_t *block) {
     node_next.link->prev = node.link->prev;
   if (node_prev.ptr)
     node_prev.link->next = node.link->next;
-  if (block == free_start)
-    free_start = block_next;
+  if (block == fl.head)
+    fl.head = block_next;
+  if (block == fl.tail)
+    fl.tail = block_prev;
+  if (fl.head == NULL || fl.tail == NULL) {
+    fl.head = NULL;
+    fl.tail = NULL;
+  }
 }
 
 static block_t *free_next(block_t *block) {
@@ -827,3 +848,5 @@ static block_t *free_prev(block_t *block) {
   node.ptr = block->payload;
   return node.link->prev;
 }
+
+static bool free_empty() { return fl.head == NULL && fl.tail == NULL; }
