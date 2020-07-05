@@ -179,6 +179,7 @@ static block_t *find_prev(block_t *block);
 static void free_add(block_t *block);
 static void free_remove(block_t *block);
 static block_t *free_next(block_t *block);
+static block_t *free_prev(block_t *block);
 
 /*
  * <What does this function do?>
@@ -807,4 +808,12 @@ static block_t *free_next(block_t *block) {
     return NULL;
   node.ptr = block->payload;
   return node.link->next;
+}
+
+static block_t *free_prev(block_t *block) {
+  node_t node;
+  if (!block)
+    return NULL;
+  node.ptr = block->payload;
+  return node.link->prev;
 }
