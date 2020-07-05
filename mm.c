@@ -151,7 +151,8 @@ static block_t *heap_start = NULL;
 // static block_t *free_start = NULL;
 
 // The free block list
-static free_list fl;
+// static free_list fl;
+static block_t *free_start;
 
 /* Function prototypes for internal helper routines */
 
@@ -193,6 +194,9 @@ static bool free_empty();
 static bool is_in_range(void *ptr);
 static bool is_aligned(void *ptr);
 
+static unsigned get_block_class(block_t *block);
+static unsigned get_class(size_t size);
+
 /*
  * <What does this function do?>
  * <What are the function's arguments?>
@@ -200,6 +204,7 @@ static bool is_aligned(void *ptr);
  * <Are there any preconditions or postconditions?>
  */
 bool mm_init(void) {
+  // int i, len;
   // Create the initial empty heap
   word_t *start = (word_t *)(mem_sbrk(2 * wsize));
 
@@ -220,8 +225,7 @@ bool mm_init(void) {
   heap_start = (block_t *)&(start[1]);
 
   // Initialize the free list
-  fl.head = NULL;
-  fl.tail = NULL;
+  free_start = NULL;
 
   // Extend the empty heap with a free block of chunksize bytes
   if (extend_heap(chunksize) == NULL) {
@@ -458,31 +462,31 @@ static block_t *coalesce_block(block_t *block) {
 
   else if (prev_alloc && !next_alloc) // Case 2
   {
+    free_remove(block_next);
     size += get_size(block_next);
     write_header(block, size, false);
     write_footer(block, size, false);
-    free_remove(block_next);
     free_add(block);
   }
 
   else if (!prev_alloc && next_alloc) // Case 3
   {
+    free_remove(block_prev);
     size += get_size(block_prev);
     write_header(block_prev, size, false);
     write_footer(block_prev, size, false);
     block = block_prev;
-    free_remove(block_prev);
     free_add(block);
   }
 
   else // Case 4
   {
+    free_remove(block_prev);
+    free_remove(block_next);
     size += get_size(block_next) + get_size(block_prev);
     write_header(block_prev, size, false);
     write_footer(block_prev, size, false);
     block = block_prev;
-    free_remove(block_prev);
-    free_remove(block_next);
     free_add(block);
   }
 
@@ -524,7 +528,8 @@ static void split_block(block_t *block, size_t asize) {
  * <Are there any preconditions or postconditions?>
  */
 static block_t *find_fit(size_t asize) {
-  block_t *block = fl.head;
+  // unsigned class = get_class(asize);
+  block_t *block = free_start;
   while (block) {
     if (asize <= get_size(block))
       return block;
@@ -558,6 +563,7 @@ bool mm_checkheap(int line) {
   size_t header_size, footer_size;
   bool header_a, footer_a, prev_footer_a;
   long free_counts = 0;
+  // int i, len = sizeof(fl) / sizeof(free_list);
   // Prologue should be allocated, and marked the start of the heap
   if (!extract_alloc(*prologue) || extract_size(*prologue) != 0 ||
       !is_in_range(prologue))
@@ -597,7 +603,8 @@ bool mm_checkheap(int line) {
   if (!get_alloc(header) || get_size(header) != 0 || !is_in_range(header))
     return false;
   // Check if there is a circle in the free list
-  header = fl.head;
+  // for (i = 0; i < len; i++) {
+  header = free_start;
   while (header) {
     free_counts--;
     if (!is_in_range(header))
@@ -606,6 +613,7 @@ bool mm_checkheap(int line) {
       return false;
     header = free_next(header);
   }
+  // }
   // Check if there are some free blocks not added into the free list
   if (free_counts > 0)
     return false;
@@ -776,21 +784,21 @@ static word_t *header_to_footer(block_t *block) {
  *Add the block to the free list
  */
 static void free_add(block_t *block) {
-  node_t node, node_tail;
+  node_t node, node_head;
+  // unsigned class;
   if (!block)
     return;
+
+  // class = get_block_class(block);
   node.ptr = block->payload;
   node.link->prev = NULL;
   node.link->next = NULL;
-  if (free_empty()) {
-    fl.head = block;
-    fl.tail = block;
-  } else {
-    node_tail.ptr = fl.tail->payload;
-    node_tail.link->next = block;
-    node.link->prev = fl.tail;
-    fl.tail = block;
+  if (!free_empty()) {
+    node_head.ptr = free_start->payload;
+    node_head.link->prev = block;
+    node.link->next = free_start;
   }
+  free_start = block;
 }
 
 /*
@@ -799,8 +807,10 @@ static void free_add(block_t *block) {
 static void free_remove(block_t *block) {
   node_t node, node_next, node_prev;
   block_t *block_next, *block_prev;
+  // unsigned class;
   if (!block)
     return;
+  // class = get_block_class(block);
   node.ptr = block->payload, node_next.ptr = NULL, node_prev.ptr = NULL;
   block_next = node.link->next;
   block_prev = node.link->prev;
@@ -812,14 +822,8 @@ static void free_remove(block_t *block) {
     node_next.link->prev = node.link->prev;
   if (node_prev.ptr)
     node_prev.link->next = node.link->next;
-  if (block == fl.head)
-    fl.head = block_next;
-  if (block == fl.tail)
-    fl.tail = block_prev;
-  if (fl.head == NULL || fl.tail == NULL) {
-    fl.head = NULL;
-    fl.tail = NULL;
-  }
+  if (block == free_start)
+    free_start = block_next;
 }
 
 static block_t *free_next(block_t *block) {
@@ -838,7 +842,7 @@ static block_t *free_prev(block_t *block) {
   return node.link->prev;
 }
 
-static bool free_empty() { return fl.head == NULL && fl.tail == NULL; }
+static bool free_empty() { return free_start == NULL; }
 
 static bool is_in_range(void *ptr) {
   void *lo = mem_heap_lo();
@@ -850,4 +854,24 @@ static bool is_aligned(void *ptr) {
   mem m;
   m.ptr = ptr;
   return (m.addr % 16) == 0;
+}
+
+static unsigned get_block_class(block_t *block) {
+  unsigned size;
+  if (!block)
+    return -1;
+  size = get_size(block);
+  return get_class(size);
+}
+
+static unsigned get_class(size_t size) {
+  unsigned class;
+  if (16 <= size && size <= 32) {
+    class = 0;
+  } else if (32 < size && size <= 48) {
+    class = 1;
+  } else {
+    class = 2;
+  }
+  return class;
 }
