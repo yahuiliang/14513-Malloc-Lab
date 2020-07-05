@@ -9,7 +9,7 @@ LLVM_PATH = /usr/local/depot/llvm-7.0/bin/
 
 # Additional flags used to compile mdriver-dbg
 # You can edit these freely to change how your debug binary compiles.
-COPT_DBG = -Og
+COPT_DBG = -O0
 CFLAGS_DBG = -DDEBUG=1
 
 # Flags used to compile normally
@@ -37,7 +37,7 @@ mdriver: mdriver.o mm-native.o $(COBJS)
 mdriver-dbg: COPT = $(COPT_DBG)
 mdriver-dbg: CFLAGS += $(CFLAGS_DBG)
 mdriver-dbg: mdriver.o mm-native-dbg.o $(COBJS)
-	$(CC) -o $@ $^ $(LDLIBS)
+	$(CC) $(COPT) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 # Sparse-mode driver for checking 64-bit capability
 mdriver-emulate: mdriver-sparse.o mm-emulate.o $(COBJS)
