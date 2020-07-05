@@ -190,6 +190,9 @@ static block_t *free_next(block_t *block);
 static block_t *free_prev(block_t *block);
 static bool free_empty();
 
+static bool is_in_range(void *ptr);
+static bool is_aligned(void *ptr);
+
 /*
  * <What does this function do?>
  * <What are the function's arguments?>
@@ -325,43 +328,6 @@ void free(void *bp) {
  * <Are there any preconditions or postconditions?>
  */
 void *realloc(void *ptr, size_t size) {
-  /*
-    block_t *block = payload_to_header(ptr);
-    size_t copysize;
-    void *newptr;
-
-    // If size == 0, then free block and return NULL
-    if (size == 0) {
-      // free(ptr);
-      return NULL;
-    }
-
-    // If ptr is NULL, then equivalent to malloc
-    if (ptr == NULL) {
-      return malloc(size);
-    }
-
-    // Otherwise, proceed with reallocation
-    newptr = malloc(size);
-
-    // If malloc fails, the original block is left untouched
-    if (newptr == NULL) {
-      return NULL;
-    }
-
-    // Copy the old data
-    copysize = get_payload_size(block); // gets size of old payload
-    if (size < copysize) {
-      copysize = size;
-    }
-    memcpy(newptr, ptr, copysize);
-
-    // Free the old block
-    free(ptr);
-
-    return newptr;
-  */
-
   void *newptr = NULL;
   block_t *block = payload_to_header(ptr);
   block_t *block_next = find_next(block);
@@ -587,25 +553,18 @@ bool mm_checkheap(int line) {
    * do you eat it with a pair of chopsticks, or with a spoon?
    */
   word_t *prologue = find_prev_footer(heap_start);
-  block_t *header = heap_start;
+  block_t *header = heap_start, *prev_free, *next_free;
   word_t *footer, *prev_footer;
-  mem start, end;
-  node_t node, node_next, node_prev;
-  mem cur;
   size_t header_size, footer_size;
   bool header_a, footer_a, prev_footer_a;
-  long padding, free_counts = 0;
+  long free_counts = 0;
   // Prologue should be allocated, and marked the start of the heap
-  cur.ptr = prologue;
-  start.ptr = mem_heap_lo();
-  end.ptr = mem_heap_hi();
-  padding = cur.addr - start.addr;
-  if (!extract_alloc(*prologue) || extract_size(*prologue) != 0 || padding < 0)
+  if (!extract_alloc(*prologue) || extract_size(*prologue) != 0 ||
+      !is_in_range(prologue))
     return false;
   while ((header_size = get_size(header)) > 0) {
     // payload should be aligned to 16
-    cur.ptr = header_to_payload(header);
-    if (cur.addr % 16 != 0)
+    if (!is_aligned(header->payload))
       return false;
     // Check if the header size matches with footer size
     footer = header_to_footer(header);
@@ -625,33 +584,29 @@ bool mm_checkheap(int line) {
     // Check if the free block is linked correctly
     if (!header_a) {
       free_counts++;
-      node.ptr = header->payload;
-
-      if (node.link->next)
-        node_next.ptr = node.link->next->payload;
-      if (node.link->prev)
-        node_prev.ptr = node.link->prev->payload;
-
-      if (node.link->prev && (header != node_prev.link->next))
+      prev_free = free_prev(header);
+      next_free = free_next(header);
+      if (prev_free != NULL && free_next(prev_free) != header)
         return false;
-      if (node.link->next && (header != node_next.link->prev))
+      if (next_free != NULL && free_prev(next_free) != header)
         return false;
     }
     header = find_next(header);
   }
-  cur.ptr = header;
-  padding = end.addr - cur.addr;
   // Epilogue should remain allocated, and mark the end of the heap
-  if (!get_alloc(header) || get_size(header) != 0 || padding < 0)
+  if (!get_alloc(header) || get_size(header) != 0 || !is_in_range(header))
     return false;
   // Check if there is a circle in the free list
   header = fl.head;
   while (header) {
     free_counts--;
+    if (!is_in_range(header))
+      return false;
     if (free_counts < 0)
       return false;
     header = free_next(header);
   }
+  // Check if there are some free blocks not added into the free list
   if (free_counts > 0)
     return false;
   return true;
@@ -884,3 +839,15 @@ static block_t *free_prev(block_t *block) {
 }
 
 static bool free_empty() { return fl.head == NULL && fl.tail == NULL; }
+
+static bool is_in_range(void *ptr) {
+  void *lo = mem_heap_lo();
+  void *hi = mem_heap_hi();
+  return lo <= ptr && ptr <= hi;
+}
+
+static bool is_aligned(void *ptr) {
+  mem m;
+  m.ptr = ptr;
+  return (m.addr % 16) == 0;
+}
