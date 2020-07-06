@@ -147,8 +147,12 @@ typedef struct {
 // Pointer to first block
 static block_t *heap_start = NULL;
 
+// Pointer to first free block
+// static block_t *free_start = NULL;
+
 // The free block list
-static block_t *free_start[15];
+// static free_list fl;
+static block_t *free_start[10];
 
 /* Function prototypes for internal helper routines */
 
@@ -329,7 +333,7 @@ void free(void *bp) {
  * <Are there any preconditions or postconditions?>
  */
 void *realloc(void *ptr, size_t size) {
-  void *newptr = NULL;
+  /*void *newptr = NULL;
   block_t *block = payload_to_header(ptr);
   block_t *block_next = find_next(block);
   bool next_alloc = get_alloc(block_next);
@@ -359,7 +363,7 @@ void *realloc(void *ptr, size_t size) {
     split_block(block, asize);
     newptr = block->payload;
   }
-  return newptr;
+  return newptr;*/
 }
 
 /*
@@ -525,16 +529,12 @@ static void split_block(block_t *block, size_t asize) {
  * <Are there any preconditions or postconditions?>
  */
 static block_t *find_fit(size_t asize) {
-  unsigned class;
-  unsigned classes = sizeof(free_start) / sizeof(block_t *);
-  block_t *block;
-  for (class = get_class(asize); class < classes; class ++) {
-    block = free_start[class];
-    while (block) {
-      if (asize <= get_size(block))
-        return block;
-      block = free_next(block);
-    }
+  unsigned class = get_class(asize);
+  block_t *block = free_start[class];
+  while (block) {
+    if (asize <= get_size(block))
+      return block;
+    block = free_next(block);
   }
   return NULL;
 }
@@ -866,14 +866,11 @@ static unsigned get_block_class(block_t *block) {
 }
 
 static unsigned get_class(size_t size) {
-  unsigned class = 0;
-  size_t len = sizeof(free_start) / sizeof(block_t *);
-  if (size == 0)
-    return -1;
-  while (size) {
-    class ++;
-    size >>= 1;
+  unsigned class;
+  if (size <= 48) {
+    class = 0;
+  } else {
+    class = 1;
   }
-  class -= 4;
-  return class >= len ? len - 1 : class;
+  return class;
 }
