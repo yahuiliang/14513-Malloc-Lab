@@ -13,7 +13,7 @@ COPT_DBG = -O0
 CFLAGS_DBG = -DDEBUG=1
 
 # Flags used to compile normally
-COPT = -O0
+COPT = -O3
 CFLAGS = -Wall -Wextra -Werror $(COPT) -g -DDRIVER -Wno-unused-function -Wno-unused-parameter
 
 # Build configuration
