@@ -206,6 +206,7 @@ static unsigned get_class(size_t size);
 static bool check_prologue_epilogue(word_t *word);
 static bool check_size(block_t *block);
 static bool check_alloc(block_t *block);
+static bool check_prev_next_connection(block_t *block);
 static bool check_consecutive_free(block_t *block);
 static bool check_free_link(block_t *block);
 
@@ -605,6 +606,10 @@ bool mm_checkheap(int line) {
     // Check if allocated flags are same between footer and header
     if (!check_alloc(block))
       return false;
+    // Check if prev block and next block are connected correctly with the
+    // current one
+    if (!check_prev_next_connection(block))
+      return false;
     // Check no two consecutive free blocks
     if (!check_consecutive_free(block))
       return false;
@@ -760,6 +765,8 @@ static void write_footer(block_t *block, size_t size, bool alloc) {
 static block_t *find_next(block_t *block) {
   dbg_requires(block != NULL);
   dbg_requires(get_size(block) != 0);
+  if (block == NULL || get_size(block) == 0)
+    return NULL;
   return (block_t *)((char *)block + get_size(block));
 }
 
@@ -779,6 +786,8 @@ static word_t *find_prev_footer(block_t *block) {
 static block_t *find_prev(block_t *block) {
   dbg_requires(block != NULL);
   dbg_requires(get_size(block) != 0);
+  if (block == NULL || get_size(block) == 0)
+    return NULL;
   word_t *footerp = find_prev_footer(block);
   size_t size = extract_size(*footerp);
   return (block_t *)((char *)block - size);
@@ -972,6 +981,24 @@ static bool check_alloc(block_t *block) {
 }
 
 /*
+ * Check if the block can connect to prev and next block
+ * correctly by using header and footer
+ *
+ * true: pass
+ * false: fail
+ */
+static bool check_prev_next_connection(block_t *block) {
+  block_t *next = find_next(block);
+  block_t *prev = find_prev(block);
+  bool pass = true;
+  if (prev != block && get_size(prev) > 0)
+    pass = pass && block == find_next(prev);
+  if (get_size(next) > 0)
+    pass = pass && block == find_prev(next);
+  return pass;
+}
+
+/*
  * Check if two consecutive free exists
  *
  * true: pass (no consecutive exists)
@@ -987,6 +1014,9 @@ static bool check_consecutive_free(block_t *block) {
 
 /*
  * Check if free blocks are linked properly
+ *
+ * true: pass
+ * false: fail
  */
 static bool check_free_link(block_t *block) {
   block_t *prev_free;
