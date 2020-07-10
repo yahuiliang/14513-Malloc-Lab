@@ -212,8 +212,8 @@ static unsigned get_class(size_t size);
 static bool check_prologue_epilogue(word_t *word);
 static bool check_size(block_t *block);
 static bool check_alloc(block_t *block);
-static bool check_prev_next_connection(block_t *block);
-static bool check_consecutive_free(block_t *block);
+static bool check_prev_next_connection(block_t *block, block_t *block_prev);
+static bool check_consecutive_free(block_t *block, block_t *block_prev);
 static bool check_free_link(block_t *block);
 
 /*
@@ -311,7 +311,7 @@ void *malloc(size_t size) {
   // Mark block as allocated
   size_t block_size = get_size(block);
   write_header(block, block_size, true, get_prev_alloc(block));
-  write_footer(block, block_size, true);
+  // write_footer(block, block_size, true);
 
   // Try to split the block if too large
   split_block(block, asize);
@@ -402,7 +402,7 @@ void *realloc(void *ptr, size_t size) {
       free_remove(block_next);
     // Update the size
     write_header(block, block_size, true, get_prev_alloc(block));
-    write_footer(block, block_size, true);
+    // write_footer(block, block_size, true);
     // Split the block if too large
     split_block(block, asize);
     newptr = block->payload;
@@ -482,11 +482,8 @@ static block_t *coalesce_block(block_t *block) {
    */
 
   block_t *block_next = find_next(block);
-  // block_t *block_prev = find_prev(block);
   block_t *block_prev;
 
-  // bool prev_alloc = extract_alloc(*find_prev_footer(block));
-  // bool next_alloc = get_alloc(block_next);
   bool prev_alloc = get_prev_alloc(block);
   bool next_alloc = get_alloc(block_next);
 
@@ -564,7 +561,7 @@ static void split_block(block_t *block, size_t asize) {
   if ((block_size - asize) >= min_block_size) {
     // Write the new size to the block
     write_header(block, asize, true, get_prev_alloc(block));
-    write_footer(block, asize, true);
+    // write_footer(block, asize, true);
 
     // Add the splited part into the free list
     block_next = find_next(block);
@@ -633,10 +630,10 @@ bool mm_checkheap(int line) {
       return false;
     // Check if prev block and next block are connected correctly with the
     // current one
-    if (!check_prev_next_connection(block))
+    if (!check_prev_next_connection(block, block_prev))
       return false;
     // Check no two consecutive free blocks
-    if (!check_consecutive_free(block))
+    if (!check_consecutive_free(block, block_prev))
       return false;
     // Check if the free block is linked correctly
     if (!check_free_link(block))
@@ -1003,10 +1000,17 @@ static bool check_prologue_epilogue(word_t *word) {
  * false: fail
  */
 static bool check_size(block_t *block) {
-  word_t footer = *(header_to_footer(block));
-  size_t header_size = get_size(block);
-  size_t footer_size = extract_size(footer);
-  return header_size == footer_size;
+  bool pass = true;
+  word_t footer;
+  size_t header_size;
+  size_t footer_size;
+  if (!get_alloc(block)) {
+    footer = *(header_to_footer(block));
+    header_size = get_size(block);
+    footer_size = extract_size(footer);
+    pass = header_size == footer_size;
+  }
+  return pass;
 }
 
 /*
@@ -1017,10 +1021,17 @@ static bool check_size(block_t *block) {
  * false: fail
  */
 static bool check_alloc(block_t *block) {
-  word_t footer = *(header_to_footer(block));
-  bool header_a = get_alloc(block);
-  bool footer_a = extract_alloc(footer);
-  return header_a == footer_a;
+  bool pass = true;
+  word_t footer;
+  bool header_a;
+  bool footer_a;
+  if (!get_alloc(block)) {
+    footer = *(header_to_footer(block));
+    header_a = get_alloc(block);
+    footer_a = extract_alloc(footer);
+    pass = header_a == footer_a;
+  }
+  return pass;
 }
 
 /*
@@ -1030,14 +1041,10 @@ static bool check_alloc(block_t *block) {
  * true: pass
  * false: fail
  */
-static bool check_prev_next_connection(block_t *block) {
-  block_t *next = find_next(block);
-  block_t *prev = find_prev(block);
+static bool check_prev_next_connection(block_t *block, block_t *block_prev) {
   bool pass = true;
-  if (prev != block && get_size(prev) > 0)
-    pass = pass && block == find_next(prev);
-  if (get_size(next) > 0)
-    pass = pass && block == find_prev(next);
+  if (block_prev && block_prev != block && get_size(block_prev) > 0)
+    pass = pass && block == find_next(block_prev);
   return pass;
 }
 
@@ -1047,12 +1054,16 @@ static bool check_prev_next_connection(block_t *block) {
  * true: pass (no consecutive exists)
  * false: fail (consecutive exists)
  */
-static bool check_consecutive_free(block_t *block) {
-  word_t prev_footer = *(find_prev_footer(block));
-  bool header_a = get_alloc(block);
-  bool prev_footer_a = extract_alloc(prev_footer);
-  bool next_header_a = get_alloc(find_next(block));
-  return (header_a || prev_footer_a) && (header_a || next_header_a);
+static bool check_consecutive_free(block_t *block, block_t *block_prev) {
+  bool a = get_alloc(block);
+  bool a_prev = true;
+  bool a_next = true;
+  block_t *block_next = find_next(block);
+  if (block_prev)
+    a_prev = get_alloc(block_prev);
+  if (block_next)
+    a_next = get_alloc(block_next);
+  return (a || a_prev) && (a || a_next);
 }
 
 /*
