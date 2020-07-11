@@ -267,7 +267,6 @@ bool mm_init(void) {
  * Returns the pointer points to the allocated start
  */
 void *malloc(size_t size) {
-  // printf("malloc...\n");
   dbg_requires(mm_checkheap(__LINE__));
 
   size_t asize;      // Adjusted block size
@@ -330,7 +329,6 @@ void *malloc(size_t size) {
  * If <bp> is freed originally, nothing will be done
  */
 void free(void *bp) {
-  // printf("free:%p ", bp);
   block_t *block;
   size_t size;
 
@@ -345,7 +343,6 @@ void free(void *bp) {
     return;
 
   size = get_size(block);
-  // printf("size:%d\n", (int)size);
 
   // The block should be marked as allocated
   dbg_assert(get_alloc(block));
@@ -365,7 +362,6 @@ void free(void *bp) {
  * Returns the pointer points to the new start
  */
 void *realloc(void *ptr, size_t size) {
-  // printf("realloc...\n");
   void *newptr;
   block_t *block, *block_next;
   bool next_alloc;
