@@ -143,8 +143,8 @@ typedef union {
  * and the next free block.
  */
 typedef struct {
-  block_t *prev;
   block_t *next;
+  block_t *prev;
 } link_t;
 
 /*
@@ -201,6 +201,9 @@ static void free_add(block_t *block);
 static void free_remove(block_t *block);
 static block_t *free_next(block_t *block);
 static block_t *free_prev(block_t *block);
+static block_t *free_prev_mini(block_t *block);
+static void set_free_next(block_t *block, block_t *block_next);
+static void set_free_prev(block_t *block, block_t *block_prev);
 static bool free_empty(unsigned class);
 
 static bool is_in_range(void *ptr);
@@ -313,7 +316,6 @@ void *malloc(size_t size) {
   // Mark block as allocated
   size_t block_size = get_size(block);
   write_header(block, block_size, true, get_prev_alloc(block));
-  // write_footer(block, block_size, true);
 
   // Try to split the block if too large
   split_block(block, asize);
@@ -408,7 +410,6 @@ void *realloc(void *ptr, size_t size) {
       free_remove(block_next);
     // Update the size
     write_header(block, block_size, true, get_prev_alloc(block));
-    // write_footer(block, block_size, true);
     // Split the block if too large
     split_block(block, asize);
     newptr = block->payload;
@@ -891,9 +892,6 @@ static void free_add(block_t *block) {
  * Remove the block from the free list
  */
 static void free_remove(block_t *block) {
-  node_t node;
-  node_t node_next;
-  node_t node_prev;
   block_t *block_next;
   block_t *block_prev;
   unsigned class;
@@ -902,19 +900,13 @@ static void free_remove(block_t *block) {
     return;
 
   class = get_block_class(block);
-  node.ptr = block->payload, node_next.ptr = NULL, node_prev.ptr = NULL;
-  block_next = node.link->next;
-  block_prev = node.link->prev;
+  block_next = free_next(block);
+  block_prev = free_prev(block);
 
   // Disconnect and Reconnect free pointers
-  if (block_next)
-    node_next.ptr = block_next->payload;
-  if (block_prev)
-    node_prev.ptr = block_prev->payload;
-  if (node_next.ptr)
-    node_next.link->prev = node.link->prev;
-  if (node_prev.ptr)
-    node_prev.link->next = node.link->next;
+  set_free_prev(block_next, block_prev);
+  set_free_next(block_prev, block_next);
+
   if (block == free_start[class])
     free_start[class] = block_next;
 }
@@ -937,8 +929,46 @@ static block_t *free_prev(block_t *block) {
   node_t node;
   if (!block || get_alloc(block))
     return NULL;
+  if (get_size(block) >= 32) {
+    node.ptr = block->payload;
+    return node.link->prev;
+  } else {
+    // Switch to tiny version
+    return free_prev_mini(block);
+  }
+}
+
+static void set_free_next(block_t *block, block_t *block_next) {
+  node_t node;
+  if (!block || get_size(block) < 16)
+    return;
   node.ptr = block->payload;
-  return node.link->prev;
+  node.link->next = block_next;
+}
+
+static void set_free_prev(block_t *block, block_t *block_prev) {
+  node_t node;
+  if (!block || get_size(block) < 32)
+    return;
+  node.ptr = block->payload;
+  node.link->prev = block_prev;
+}
+
+static block_t *free_prev_mini(block_t *block) {
+  unsigned class;
+  block_t *itr;
+  block_t *block_prev = NULL;
+  if (!block || get_alloc(block) || get_size(block) > 16)
+    return NULL;
+  class = get_block_class(block);
+  itr = free_start[class];
+  while (itr) {
+    if (itr == block)
+      return block_prev;
+    block_prev = itr;
+    itr = free_next(itr);
+  }
+  return NULL;
 }
 
 /*
@@ -979,9 +1009,12 @@ static unsigned get_block_class(block_t *block) {
  * Get the class in the segregated list based on the size
  */
 static unsigned get_class(size_t size) {
-  unsigned class = 0;
+  unsigned class;
   size_t len = sizeof(free_start) / sizeof(block_t *);
-  // class 0: [0, 32]; class 1: [33, 64]; class 2: [65, 128] ...
+  if (size <= 16)
+    return 0;
+  class = 1;
+  // class 1: [17, 32]; class 2: [33, 64]; class 3: [65, 128] ...
   while (size > min_block_size && class < len) {
     class ++;
     size >>= 1;
