@@ -267,6 +267,7 @@ bool mm_init(void) {
  * Returns the pointer points to the allocated start
  */
 void *malloc(size_t size) {
+  // printf("malloc...\n");
   dbg_requires(mm_checkheap(__LINE__));
 
   size_t asize;      // Adjusted block size
@@ -286,7 +287,9 @@ void *malloc(size_t size) {
   }
 
   // Adjust block size to include overhead and to meet alignment requirements
-  asize = round_up(size + dsize, dsize);
+  asize = round_up(size + wsize, dsize);
+  if (asize < min_block_size)
+    asize = min_block_size;
 
   // Search the free list for a fit
   block = find_fit(asize);
@@ -327,6 +330,7 @@ void *malloc(size_t size) {
  * If <bp> is freed originally, nothing will be done
  */
 void free(void *bp) {
+  // printf("free:%p ", bp);
   block_t *block;
   size_t size;
 
@@ -341,6 +345,7 @@ void free(void *bp) {
     return;
 
   size = get_size(block);
+  // printf("size:%d\n", (int)size);
 
   // The block should be marked as allocated
   dbg_assert(get_alloc(block));
@@ -360,6 +365,8 @@ void free(void *bp) {
  * Returns the pointer points to the new start
  */
 void *realloc(void *ptr, size_t size) {
+  /*
+  // printf("realloc...\n");
   void *newptr;
   block_t *block, *block_next;
   bool next_alloc;
@@ -379,7 +386,11 @@ void *realloc(void *ptr, size_t size) {
   block = payload_to_header(ptr);
   block_next = find_next(block);
   next_alloc = get_alloc(block_next);
-  asize = round_up(size + dsize, dsize);
+
+  asize = round_up(size + wsize, dsize);
+  if (asize < min_block_size)
+    asize = min_block_size;
+
   block_size = get_size(block);
   if (!next_alloc) {
     // Sum up the size with the next free block if exists
@@ -388,7 +399,7 @@ void *realloc(void *ptr, size_t size) {
   if (block_size < asize) {
     // The current block pointed by ptr cannot satisfy the new size
     // malloc the new one
-    newptr = malloc(asize);
+    newptr = malloc(size);
     if (newptr == NULL)
       // no more space
       return NULL;
@@ -407,6 +418,35 @@ void *realloc(void *ptr, size_t size) {
     split_block(block, asize);
     newptr = block->payload;
   }
+  return newptr;
+  */
+  block_t *block = payload_to_header(ptr);
+  size_t copysize;
+  void *newptr;
+
+  if (size == 0) {
+    free(ptr);
+    return NULL;
+  }
+
+  if (ptr == NULL) {
+    return malloc(size);
+  }
+
+  newptr = malloc(size);
+
+  if (newptr == NULL) {
+    return NULL;
+  }
+
+  copysize = get_payload_size(block);
+  if (size < copysize) {
+    copysize = size;
+  }
+  memcpy(newptr, ptr, copysize);
+
+  free(ptr);
+
   return newptr;
 }
 
@@ -751,7 +791,7 @@ static size_t get_size(block_t *block) { return extract_size(block->header); }
  */
 static word_t get_payload_size(block_t *block) {
   size_t asize = get_size(block);
-  return asize - dsize;
+  return asize - wsize;
 }
 
 /*
