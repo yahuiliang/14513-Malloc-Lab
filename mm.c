@@ -365,7 +365,6 @@ void free(void *bp) {
  * Returns the pointer points to the new start
  */
 void *realloc(void *ptr, size_t size) {
-  /*
   // printf("realloc...\n");
   void *newptr;
   block_t *block, *block_next;
@@ -418,35 +417,6 @@ void *realloc(void *ptr, size_t size) {
     split_block(block, asize);
     newptr = block->payload;
   }
-  return newptr;
-  */
-  block_t *block = payload_to_header(ptr);
-  size_t copysize;
-  void *newptr;
-
-  if (size == 0) {
-    free(ptr);
-    return NULL;
-  }
-
-  if (ptr == NULL) {
-    return malloc(size);
-  }
-
-  newptr = malloc(size);
-
-  if (newptr == NULL) {
-    return NULL;
-  }
-
-  copysize = get_payload_size(block);
-  if (size < copysize) {
-    copysize = size;
-  }
-  memcpy(newptr, ptr, copysize);
-
-  free(ptr);
-
   return newptr;
 }
 
