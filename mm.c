@@ -189,7 +189,6 @@ static bool extract_prev_alloc(word_t header);
 static bool get_prev_alloc(block_t *block);
 static bool extract_prev_min(word_t header);
 static bool get_prev_min(block_t *block);
-static void set_prev_min(block_t *block, bool prev_min);
 
 static void write_header(block_t *block, size_t size, bool alloc,
                          bool prev_alloc, bool prev_min);
@@ -473,6 +472,9 @@ static block_t *extend_heap(size_t size) {
 
   // Create new epilogue header
   block_t *block_next = find_next(block);
+  // prev_alloc and prev_min flags should be marked as false
+  // since the fresh extended heap is not used and its size
+  // must be greater than 16
   write_header(block_next, 0, true, false, false);
 
   // Coalesce in case the previous block was free
@@ -490,10 +492,10 @@ static block_t *coalesce_block(block_t *block) {
   size_t size = get_size(block);
 
   /*
-   * TODO: delete or replace this comment once you've thought about it.
-   * Think about how we find the prev and next blocks. What information
-   * do we need to have about the heap in order to do this? Why doesn't
-   * "bool prev_alloc = get_alloc(block_prev)" work properly?
+   * The footer is removed for allocated blocks
+   * Therefore, a prev alloc flag is guarded here
+   * to ensure do not extract footer for allocated
+   * blocks.
    */
 
   block_t *block_next = find_next(block);
@@ -558,6 +560,8 @@ static block_t *coalesce_block(block_t *block) {
   }
 
   // Set the next block's prev alloc flag to false
+  // Free blocks are coalesced, determine if the size is 16 and set
+  // prev_min flag in the next block
   block_next = find_next(block);
   write_header(block_next, get_size(block_next), get_alloc(block_next), false,
                get_size(block) == 16);
@@ -582,18 +586,25 @@ static void split_block(block_t *block, size_t asize) {
     write_header(block, asize, true, get_prev_alloc(block),
                  get_prev_min(block));
 
-    // Add the splited part into the free list
+    // Add the splited part into the free list,
+    // if allocated part is mini size, the prev_min
+    // flag should be set in the splited part.
     block_next = find_next(block);
     write_header(block_next, block_size - asize, false, true, asize == 16);
     write_footer(block_next, block_size - asize, false);
     free_add(block_next);
 
     // Set the prev alloc flag to the block just after the whole block before
-    // splited
+    // splited. Its prev_min flag should also be set if the splited part is
+    // mini size.
     block_next = find_next(block_next);
     write_header(block_next, get_size(block_next), get_alloc(block_next), false,
                  block_size - asize == 16);
   } else {
+    /*
+     * The block size is just the mini size.
+     * Sets the next block prev_min flag to true
+     */
     block_next = find_next(block);
     write_header(block_next, get_size(block_next), get_alloc(block_next), true,
                  true);
@@ -780,10 +791,18 @@ static word_t get_payload_size(block_t *block) {
  */
 static bool extract_alloc(word_t word) { return (bool)(word & alloc_mask); }
 
+/*
+ * extract_prev_alloc: returns the allocation status of the previous block
+ *                     in the given header
+ */
 static bool extract_prev_alloc(word_t word) {
   return (bool)(word & prev_alloc_mask);
 }
 
+/*
+ * extract_prev_min: returns if the previous block is mini block
+ *                   in the given header
+ */
 static bool extract_prev_min(word_t word) {
   return (bool)(word & prev_min_mask);
 }
@@ -798,22 +817,17 @@ static bool get_prev_alloc(block_t *block) {
   return extract_prev_alloc(block->header);
 }
 
+/*
+ * get_prev_min: returns if the previous blocvk is mini block
+ */
 static bool get_prev_min(block_t *block) {
   return extract_prev_min(block->header);
 }
 
-static void set_prev_min(block_t *block, bool prev_min) {
-  if (prev_min) {
-    block->header |= prev_min_mask;
-  } else {
-    block->header &= ~prev_min_mask;
-  }
-}
-
 /*
- * write_header: given a block and its size and allocation status,
+ * write_header: given a block and its size, allocation status,
+ *               previous allocation status, and previous block size status
  *               writes an appropriate value to the block header.
- * TODO: Are there any preconditions or postconditions?
  */
 static void write_header(block_t *block, size_t size, bool alloc,
                          bool prev_alloc, bool prev_min) {
@@ -825,11 +839,12 @@ static void write_header(block_t *block, size_t size, bool alloc,
  * write_footer: given a block and its size and allocation status,
  *               writes an appropriate value to the block footer by first
  *               computing the position of the footer.
- * TODO: Are there any preconditions or postconditions?
  */
 static void write_footer(block_t *block, size_t size, bool alloc) {
   dbg_requires(block != NULL);
   dbg_requires(get_size(block) == size && size > 0);
+  // If the size is less than 32, it is the mini block
+  // and it does not have the footer
   if (get_size(block) < 32)
     return;
   word_t *footerp = header_to_footer(block);
@@ -862,17 +877,20 @@ static word_t *find_prev_footer(block_t *block) {
  *            based on its size.
  */
 static block_t *find_prev(block_t *block) {
+  word_t *footerp;
+  size_t size;
   dbg_requires(block != NULL);
   dbg_requires(get_size(block) != 0);
   if (block == NULL || get_size(block) == 0)
     return NULL;
   if (get_prev_min(block)) {
-    // printf("size:%d\n", (int)get_size(block));
-    // printf("good\n");
+    // The previous block is the mini block
     return (block_t *)((char *)block - 16);
   } else {
-    word_t *footerp = find_prev_footer(block);
-    size_t size = extract_size(*footerp);
+    // The normal block has the footer
+    // and it is extracted to determine the size
+    footerp = find_prev_footer(block);
+    size = extract_size(*footerp);
     return (block_t *)((char *)block - size);
   }
 }
@@ -906,19 +924,31 @@ static word_t *header_to_footer(block_t *block) {
  */
 static void free_add(block_t *block) {
   unsigned class;
+  block_t *block_next = NULL;
+  block_t *block_prev = NULL;
+  size_t size;
 
   if (!block)
     return;
 
   class = get_block_class(block);
-  set_free_prev(block, NULL);
-  set_free_next(block, NULL);
-  // Connect pointers
-  if (!free_empty(class)) {
-    set_free_prev(free_start[class], block);
-    set_free_next(block, free_start[class]);
+  block_next = free_start[class];
+  size = get_size(block);
+
+  if (class > 10) {
+    while (block_next && size > get_size(block_next)) {
+      block_prev = block_next;
+      block_next = free_next(block_next);
+    }
   }
-  free_start[class] = block;
+
+  set_free_prev(block_next, block);
+  set_free_next(block, block_next);
+  set_free_next(block_prev, block);
+  set_free_prev(block, block_prev);
+
+  if (!block_prev)
+    free_start[class] = block;
 }
 
 /*
@@ -971,26 +1001,40 @@ static block_t *free_prev(block_t *block) {
   }
 }
 
+/*
+ * Sets the next free pointer for the current free block
+ */
 static void set_free_next(block_t *block, block_t *block_next) {
   node_t node;
+  // If the size is less than 16, next free pointer cannot be hold by the block
   if (!block || get_size(block) < 16)
     return;
   node.ptr = block->payload;
   node.link->next = block_next;
 }
 
+/*
+ * Sets the previous free pointer for the current block
+ */
 static void set_free_prev(block_t *block, block_t *block_prev) {
   node_t node;
+  // The mini block cannot hold the previous free pointer
   if (!block || get_size(block) < 32)
     return;
   node.ptr = block->payload;
   node.link->prev = block_prev;
 }
 
+/*
+ * Mini free blocks do not have the previous free pointer.
+ * This function iterate through the free list to find
+ * the previous free block corresponds to the current one
+ */
 static block_t *free_prev_mini(block_t *block) {
   unsigned class;
   block_t *itr;
   block_t *block_prev = NULL;
+  // Only mini free blocks are allowed to use this function
   if (!block || get_alloc(block) || get_size(block) > 16)
     return NULL;
   class = get_block_class(block);
