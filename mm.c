@@ -85,7 +85,7 @@ static const size_t wsize = sizeof(word_t);
 static const size_t dsize = 2 * wsize;
 
 // Minimum block size (bytes)
-static const size_t min_block_size = 2 * dsize;
+static const size_t min_block_size = dsize;
 
 // The amount of the heap should be extended when
 // no block size is big enough for the new allocation
@@ -867,8 +867,8 @@ static block_t *find_prev(block_t *block) {
   if (block == NULL || get_size(block) == 0)
     return NULL;
   if (get_prev_min(block)) {
-    printf("size:%d\n", (int)get_size(block));
-    printf("good\n");
+    // printf("size:%d\n", (int)get_size(block));
+    // printf("good\n");
     return (block_t *)((char *)block - 16);
   } else {
     word_t *footerp = find_prev_footer(block);
