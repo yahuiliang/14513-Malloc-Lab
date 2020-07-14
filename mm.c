@@ -6,6 +6,39 @@
  *                                                                            *
  *  ************************************************************************  *
  *                           Yahui self-implemented heap. :)                  *
+ *           The heap uses the best-fit strategy to allocate memory           *
+ *           to the program. The max search limit is 10 (find the best one    *
+ *           from 10 free blocks). Once this limit has been reached,          *
+ *           one block with the minimum fragmentation will be allocated.      *
+ *           If none free block is found, the heap will be extended by a      *
+ *           chunksize and allocate that memory to the program. If the whole  *
+ *           block is too big, it will be splited. The splited part will be   *
+ *           added to the free list.                                          *
+ *                                                                            *
+ *           Free blocks are managed by using the FILO                        *
+ *           rule, and they are linked together by using the double-linked    *
+ *           list. The segregated list is implemented for optimizing the      *
+ *           utilization and throughput of the malloc and free. Different     *
+ *           block sizes are assigned to different classes. And each class    *
+ *           is a free list.                                                  *
+ *                                                                            *
+ *           Allocated blocks have the fields of header and payload. The      *
+ *           upper bits record the size of the block, and the last 4 bits     *
+ *           record prev_min (last 2nd, set if the previous block is mini     *
+ *           block), prev_alloc (last 1st, set if the previous block is       *
+ *           allocated), and alloc(last, set if the current block is          *
+ *           allocated). When the allocated block gets freed, it will         *
+ *           determine whether it should be coalesced with others based       *
+ *           on these bits.                                                   *
+ *                                                                            *
+ *           Free blocks have two different sub-divisions: mini blocks and    *
+ *           normal blocks. For mini blocks, they only have the header        *
+ *           and the next free pointer. For normal blocks, they have the      *
+ *           header, the next/prev free pointer, and the footer. Since mini   *
+ *           blocks do not have the previous free pointer, when we want to    *
+ *           search the previous free block based on the current one, we must *
+ *           iterate whole free list to find it. The footer is used for       *
+ *           determining the previous block size when coalescing.             *
  *                                                                            *
  *  ************************************************************************  *
  *  ** ADVICE FOR STUDENTS. **                                                *
