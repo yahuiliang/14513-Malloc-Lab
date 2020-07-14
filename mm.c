@@ -75,7 +75,6 @@
 #endif
 
 /* Basic constants */
-
 typedef uint64_t word_t;
 
 // Word and header size (bytes)
@@ -105,6 +104,7 @@ static const word_t prev_min_mask = 0x1 << 2;
 // the lower 4 bits of the header are "dont care"
 static const word_t size_mask = ~(word_t)0xF;
 
+// The max search number for the best-fit approach
 static const unsigned max_search = 10;
 
 /* Represents the header and payload of one block in the heap */
@@ -393,6 +393,7 @@ void *realloc(void *ptr, size_t size) {
   next_alloc = get_alloc(block_next);
 
   asize = round_up(size + wsize, dsize);
+  // If the size is too small, round it up to mini block size
   if (asize < min_block_size)
     asize = min_block_size;
 
@@ -566,7 +567,7 @@ static block_t *coalesce_block(block_t *block) {
   // prev_min flag in the next block
   block_next = find_next(block);
   write_header(block_next, get_size(block_next), get_alloc(block_next), false,
-               get_size(block) == 16);
+               get_size(block) == min_block_size);
 
   dbg_ensures(!get_alloc(block));
 
@@ -592,7 +593,8 @@ static void split_block(block_t *block, size_t asize) {
     // if allocated part is mini size, the prev_min
     // flag should be set in the splited part.
     block_next = find_next(block);
-    write_header(block_next, block_size - asize, false, true, asize == 16);
+    write_header(block_next, block_size - asize, false, true,
+                 asize == min_block_size);
     write_footer(block_next, block_size - asize, false);
     free_add(block_next);
 
@@ -601,7 +603,7 @@ static void split_block(block_t *block, size_t asize) {
     // mini size.
     block_next = find_next(block_next);
     write_header(block_next, get_size(block_next), get_alloc(block_next), false,
-                 block_size - asize == 16);
+                 block_size - asize == min_block_size);
   } else {
     /*
      * The block size is just the mini size.
@@ -862,9 +864,9 @@ static void write_header(block_t *block, size_t size, bool alloc,
 static void write_footer(block_t *block, size_t size, bool alloc) {
   dbg_requires(block != NULL);
   dbg_requires(get_size(block) == size && size > 0);
-  // If the size is less than 32, it is the mini block
+  // If the size is less or equal to 16, it is the mini block
   // and it does not have the footer
-  if (get_size(block) < 32)
+  if (get_size(block) <= min_block_size)
     return;
   word_t *footerp = header_to_footer(block);
   *footerp = pack(size, alloc, false, false);
@@ -904,7 +906,7 @@ static block_t *find_prev(block_t *block) {
     return NULL;
   if (get_prev_min(block)) {
     // The previous block is the mini block
-    return (block_t *)((char *)block - 16);
+    return (block_t *)((char *)block - min_block_size);
   } else {
     // The normal block has the footer
     // and it is extracted to determine the size
@@ -1013,12 +1015,12 @@ static block_t *free_prev(block_t *block) {
   node_t node;
   if (!block || get_alloc(block))
     return NULL;
-  if (get_size(block) >= 32) {
-    node.ptr = block->payload;
-    return node.link->prev;
-  } else {
+  if (get_size(block) <= min_block_size) {
     // Switch to tiny version
     return free_prev_mini(block);
+  } else {
+    node.ptr = block->payload;
+    return node.link->prev;
   }
 }
 
@@ -1028,7 +1030,7 @@ static block_t *free_prev(block_t *block) {
 static void set_free_next(block_t *block, block_t *block_next) {
   node_t node;
   // If the size is less than 16, next free pointer cannot be hold by the block
-  if (!block || get_size(block) < 16)
+  if (!block || get_size(block) < min_block_size)
     return;
   node.ptr = block->payload;
   node.link->next = block_next;
@@ -1040,7 +1042,7 @@ static void set_free_next(block_t *block, block_t *block_next) {
 static void set_free_prev(block_t *block, block_t *block_prev) {
   node_t node;
   // The mini block cannot hold the previous free pointer
-  if (!block || get_size(block) < 32)
+  if (!block || get_size(block) <= min_block_size)
     return;
   node.ptr = block->payload;
   node.link->prev = block_prev;
@@ -1056,7 +1058,7 @@ static block_t *free_prev_mini(block_t *block) {
   block_t *itr;
   block_t *block_prev = NULL;
   // Only mini free blocks are allowed to use this function
-  if (!block || get_alloc(block) || get_size(block) > 16)
+  if (!block || get_alloc(block) || get_size(block) > min_block_size)
     return NULL;
   class = get_block_class(block);
   itr = free_start[class];
@@ -1109,7 +1111,7 @@ static unsigned get_block_class(block_t *block) {
 static unsigned get_class(size_t size) {
   unsigned class;
   size_t len = sizeof(free_start) / sizeof(block_t *);
-  if (size <= 16)
+  if (size <= min_block_size)
     return 0;
   class = 1;
   // class 1: [17, 32]; class 2: [33, 64]; class 3: [65, 128] ...
@@ -1141,7 +1143,7 @@ static bool check_size(block_t *block) {
   word_t footer;
   size_t header_size;
   size_t footer_size;
-  if (!get_alloc(block) && get_size(block) >= 32) {
+  if (!get_alloc(block) && get_size(block) > min_block_size) {
     footer = *(header_to_footer(block));
     header_size = get_size(block);
     footer_size = extract_size(footer);
@@ -1162,7 +1164,7 @@ static bool check_alloc(block_t *block) {
   word_t footer;
   bool header_a;
   bool footer_a;
-  if (!get_alloc(block) && get_size(block) >= 32) {
+  if (!get_alloc(block) && get_size(block) > min_block_size) {
     footer = *(header_to_footer(block));
     header_a = get_alloc(block);
     footer_a = extract_alloc(footer);
