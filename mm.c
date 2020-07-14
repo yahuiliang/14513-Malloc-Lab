@@ -105,6 +105,8 @@ static const word_t prev_min_mask = 0x1 << 2;
 // the lower 4 bits of the header are "dont care"
 static const word_t size_mask = ~(word_t)0xF;
 
+static const unsigned max_search = 10;
+
 /* Represents the header and payload of one block in the heap */
 typedef struct block {
   /* Header contains size + allocation flag */
@@ -619,15 +621,32 @@ static block_t *find_fit(size_t asize) {
   unsigned class;
   unsigned classes = sizeof(free_start) / sizeof(block_t *);
   block_t *block;
-  for (class = get_class(asize); class < classes; class ++) {
+  size_t size;
+  unsigned count = 0;
+  block_t *slot = NULL;
+  // Iterate through all free classes to find available ones
+  for (class = get_class(asize); class < classes && !slot; class ++) {
     block = free_start[class];
     while (block) {
-      if (asize <= get_size(block))
-        return block;
+      size = get_size(block);
+      // Check if the block can be allocated
+      if (asize <= size) {
+        // The block can be allocated
+        if (!slot || size < get_size(slot)) {
+          // The current block minimizes the fragmentation
+          // Assign that to the return val
+          slot = block;
+        }
+        count++;
+      }
+      // Check if the current max best fit search has reached
+      if (count >= max_search)
+        return slot;
+      // Jump to the next block in the free list
       block = free_next(block);
     }
   }
-  return NULL;
+  return slot;
 }
 
 /*
@@ -919,6 +938,12 @@ static word_t *header_to_footer(block_t *block) {
   return (word_t *)(block->payload + get_size(block) - dsize);
 }
 
+/*************************************************************************/
+
+/*
+ * The free list uses FILO rule to insert and remove elements
+ */
+
 /*
  * Add the block to the free list
  */
@@ -935,20 +960,14 @@ static void free_add(block_t *block) {
   block_next = free_start[class];
   size = get_size(block);
 
-  if (class > 10) {
-    while (block_next && size > get_size(block_next)) {
-      block_prev = block_next;
-      block_next = free_next(block_next);
-    }
-  }
-
+  // Connect the new block with the free list head
   set_free_prev(block_next, block);
   set_free_next(block, block_next);
   set_free_next(block_prev, block);
   set_free_prev(block, block_prev);
 
-  if (!block_prev)
-    free_start[class] = block;
+  // Reset the head of the list
+  free_start[class] = block;
 }
 
 /*
@@ -973,6 +992,8 @@ static void free_remove(block_t *block) {
   if (block == free_start[class])
     free_start[class] = block_next;
 }
+
+/*********************************************************************/
 
 /*
  * Get the next free block
