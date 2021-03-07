@@ -37,7 +37,7 @@ throughputs.txt Benchmark throughputs, indexed by CPU type
 ***********************
 Example malloc packages
 ***********************
-mm.c            Implicit-list allocator to use as starting point
+mm.c            The core implementation of memory management
 mm-naive.c      Fast but extremely memory-inefficient package
 
 *******************************
