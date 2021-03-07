@@ -35,7 +35,7 @@ calibrate.pl   Code to generate benchmark throughput
 throughputs.txt Benchmark throughputs, indexed by CPU type
 
 ***********************
-Example malloc packages
+Malloc packages
 ***********************
 mm.c            The core implementation of memory management
 mm-naive.c      Fast but extremely memory-inefficient package
